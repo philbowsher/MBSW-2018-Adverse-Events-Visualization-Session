@@ -1,0 +1,123 @@
+---
+title: 'Getting Started'
+output: html_notebook
+---
+
+# Adverse Events
+
+Our goal is to explore adverse events for different brand name drugs. To start, we'll access data using the openFDA API and the rxnorm dataset on Google BigQuery. Together, the tools provide public access to information on adverse events (openFDA) and drug composition (rxnorm).
+
+## Accessing Data
+
+We'll start by setting up our connection to Google BigQuery. BigQuery requires a free test project, follow the `bigrquery` instructions to get started.
+
+```{r setup}
+library(flexdashboard)
+library(bigrquery)
+library(openfda)
+library(dplyr)
+library(DBI)
+library(ggplot2)
+library(ggthemes)
+```
+
+
+
+```{r bigquery}
+# Setup Connection to BigQuery
+# Follow the getting started guide to create your own project
+con <- dbConnect(
+  bigrquery::bigquery(),
+  project = 'bigquery-public-data',
+  dataset = 'nlm_rxnorm',
+  billing = bq_test_project()
+)
+pathways <- tbl(con, 'rxn_all_pathways_01_18')
+
+# Get all brand name drugs from BigQuery
+all_names <- pathways %>% 
+  filter(TARGET_TTY == 'BN') %>% 
+  select(TARGET_NAME) %>% 
+  group_by(TARGET_NAME) %>% 
+  summarise() %>% 
+  collect()
+```
+
+
+Next, we'll write some helper functions to use the openFDA API and package to query adverse events data.
+
+```{r openfda}
+# Helper Functions
+get_adverse <- function(gender, brand_name, age) {
+  fda_query("/drug/event.json") %>%
+    fda_filter("patient.drug.openfda.brand_name", brand_name) %>% 
+    fda_filter("patient.patientsex", gender) %>% 
+    fda_filter("patient.patientonsetage", age) %>% 
+    fda_count("patient.reaction.reactionmeddrapt.exact") %>% 
+    fda_limit(10) %>% 
+    fda_exec()
+}
+
+
+create_age <- function(min, max){#
+  sprintf('[%d+TO+%d]', min, max)
+}
+
+```
+
+Using our openFDA helper functions and BigQuery connection, we can pull adverse event data by gender for a specific drug and age range. We can also lookup the drug's active ingredients.
+
+```{r pull-data}
+sel_name <- 'Tylenol'
+
+ingredients <- pathways %>%
+  filter(TARGET_NAME==sel_name, TARGET_TTY == 'BN', SOURCE_TTY %in% c('IN', 'SY')) %>% 
+  select(SOURCE_NAME, SOURCE_TTY) %>% 
+  collect()
+
+age <- create_age(20,60)
+
+male <- get_adverse("1", sel_name,age) %>% 
+    mutate(gender = 'male')
+
+female <- get_adverse("2", sel_name, age) %>% 
+    mutate(gender = 'female')
+
+adverse <- rbind(male, female)
+
+adverse
+```
+
+## Plotting
+
+Now we're ready to start investigating the data and showing off the resulting graphics. We'll create plots and then a static dashboard. Then we'll add in `shiny` for full interactivity.
+
+```{r plots}
+adverse %>% 
+  group_by(term) %>% 
+  summarise(count = sum(count)) %>% 
+  ggplot() +
+    geom_bar(aes(reorder(term, count), count), stat = "identity") +
+    coord_flip() +
+    labs(
+      title = sel_name
+    ) +
+    theme_fivethirtyeight()
+  
+```
+
+```{r gender}
+  ggplot(adverse) +
+    geom_bar(aes(reorder(term, count), count, fill = gender), stat = "identity") +
+    facet_wrap(~gender) +
+    coord_flip() +
+    labs(
+      title = sel_name
+    ) +
+    theme_fivethirtyeight()
+  
+```
+
+```{r ingredient}
+DT::datatable(ingredients %>% select(`active ingredient` = SOURCE_NAME))
+```

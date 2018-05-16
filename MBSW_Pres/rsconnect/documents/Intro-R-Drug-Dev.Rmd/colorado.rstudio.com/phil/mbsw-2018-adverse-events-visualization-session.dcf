@@ -1,0 +1,12 @@
+name: mbsw-2018-adverse-events-visualization-session
+title: MBSW-2018-Adverse-Events-Visualization-Session
+username: phil
+account: phil
+server: colorado.rstudio.com
+hostUrl: http://colorado.rstudio.com:3939/__api__
+appId: 1115
+bundleId: 7103
+url: http://colorado.rstudio.com:3939/content/1115/
+when: 1526438989.90282
+asMultiple: FALSE
+asStatic: FALSE

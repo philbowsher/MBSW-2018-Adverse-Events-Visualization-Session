@@ -1,0 +1,197 @@
+---
+title: "Adverse Events"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    theme: readable
+runtime: shiny
+---
+
+```{r setup}
+library(flexdashboard)
+library(bigrquery)
+library(openfda)
+library(dplyr)
+library(DBI)
+library(ggplot2)
+library(ggthemes)
+
+# Setup Connection to BigQuery
+# Follow the getting started guide to create your own project
+con <- dbConnect(
+  bigrquery::bigquery(),
+  project = 'bigquery-public-data',
+  dataset = 'nlm_rxnorm',
+  billing = bq_test_project()
+)
+pathways <- tbl(con, 'rxn_all_pathways_01_18')
+
+# Get all brand name drugs from BigQuery
+all_names <- pathways %>% 
+  filter(TARGET_TTY == 'BN') %>% 
+  select(TARGET_NAME) %>% 
+  group_by(TARGET_NAME) %>% 
+  summarise() %>% 
+  collect()
+  
+get_adverse <- function(gender, brand_name, age) {
+  fda_query("/drug/event.json") %>%
+    fda_filter("patient.drug.openfda.brand_name", brand_name) %>% 
+    fda_filter("patient.patientsex", gender) %>% 
+    fda_filter("patient.patientonsetage", age) %>% 
+    fda_count("patient.reaction.reactionmeddrapt.exact") %>% 
+    fda_limit(10) %>% 
+    fda_exec()
+}
+
+
+create_age <- function(min, max){#
+  sprintf('[%d+TO+%d]', min, max)
+}
+
+
+sel_name <- 'Tylenol'
+
+ingredients <- pathways %>%
+  filter(TARGET_NAME==sel_name, TARGET_TTY == 'BN', SOURCE_TTY %in% c('IN', 'SY')) %>% 
+  select(SOURCE_NAME, SOURCE_TTY) %>% 
+  collect()
+
+age <- create_age(20,60)
+
+male <- get_adverse("1", sel_name,age) %>% 
+    mutate(gender = 'male')
+
+female <- get_adverse("2", sel_name, age) %>% 
+    mutate(gender = 'female')
+
+adverse <- rbind(male, female)
+
+adverse
+```
+
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(flexdashboard)
+library(bigrquery)
+library(openfda)
+library(dplyr)
+library(DBI)
+library(ggplot2)
+library(ggthemes)
+con <- dbConnect(
+  bigrquery::bigquery(),
+  project = 'bigquery-public-data',
+  dataset = 'nlm_rxnorm',
+  billing = bq_test_project()
+)
+pathways <- tbl(con, 'rxn_all_pathways_01_18')
+
+# Get all brand name drugs from BigQuery
+all_names <- pathways %>% 
+  filter(TARGET_TTY == 'BN') %>% 
+  select(TARGET_NAME) %>% 
+  group_by(TARGET_NAME) %>% 
+  summarise() %>% 
+  collect()
+
+get_adverse <- function(gender, brand_name, age) {
+  fda_query("/drug/event.json") %>%
+    fda_filter("patient.drug.openfda.brand_name", brand_name) %>% 
+    fda_filter("patient.patientsex", gender) %>% 
+    fda_filter("patient.patientonsetage", age) %>% 
+    fda_count("patient.reaction.reactionmeddrapt.exact") %>% 
+    fda_limit(10) %>% 
+    fda_exec()
+}
+
+
+create_age <- function(min, max){#
+  sprintf('[%d+TO+%d]', min, max)
+}
+```
+
+Column {.sidebar}
+------------
+
+```{r inputs}
+
+
+selectizeInput('sel_name', 'Brand Name Drug', all_names)
+
+sliderInput('ages', 'Age Range', min = 20, max = 60, value = c(20,60))
+
+
+ingredients <- reactive({ pathways %>%
+  filter(TARGET_NAME == input$sel_name, TARGET_TTY == 'BN', SOURCE_TTY %in% c('IN', 'SY')) %>% 
+  select(SOURCE_NAME, SOURCE_TTY) %>% 
+  collect()
+})
+
+age <- reactive({create_age(input$ages[1],input$ages[2])})
+
+male <- reactive({get_adverse("1", input$sel_name, age()) %>% 
+    mutate(gender = 'male')})
+
+female <- reactive({get_adverse("2", input$sel_name, age()) %>% 
+    mutate(gender = 'female') })
+
+adverse <- reactive({rbind(male(), female())})
+
+```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### All Events
+
+```{r}
+renderPlot({
+  adverse() %>% 
+  group_by(term) %>% 
+  summarise(count = sum(count)) %>% 
+  ggplot() +
+    geom_bar(aes(reorder(term,count), count), stat = 'identity') +
+    coord_flip() +
+    labs(
+      title = input$sel_name
+    ) +
+    theme_fivethirtyeight()
+})
+
+```
+
+
+### Events by Gender
+
+```{r}
+renderPlot({
+  ggplot(adverse()) +
+    geom_bar(aes(reorder(term,count), count, fill = gender), stat = 'identity') +
+    facet_wrap(~gender)+
+    coord_flip() +
+    labs(
+      title = input$sel_name
+    ) +
+    theme_fivethirtyeight()
+})
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Age Range
+
+```{r}
+renderValueBox({valueBox(age(), icon = 'fa-flask')})
+```
+
+### {.no-title}
+
+```{r}
+DT::renderDataTable({DT::datatable(ingredients())})
+```
+
